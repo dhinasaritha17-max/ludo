@@ -1,0 +1,89 @@
+{
+  "users": {
+    "usr_cosmic": {
+      "id": "usr_cosmic",
+      "username": "CosmicRoller",
+      "avatar": "dice-king",
+      "isGuest": false,
+      "gamesPlayed": 142,
+      "wins": 98,
+      "losses": 44,
+      "winRate": 69,
+      "favoriteColor": "red",
+      "xp": 4850,
+      "level": 16,
+      "createdAt": 1789114327817
+    },
+    "usr_starlight": {
+      "id": "usr_starlight",
+      "username": "StarGazer_99",
+      "avatar": "star-master",
+      "isGuest": false,
+      "gamesPlayed": 110,
+      "wins": 72,
+      "losses": 38,
+      "winRate": 65,
+      "favoriteColor": "yellow",
+      "xp": 3500,
+      "level": 12,
+      "createdAt": 1789114327817
+    },
+    "usr_phoenix": {
+      "id": "usr_phoenix",
+      "username": "PhoenixFire",
+      "avatar": "phoenix",
+      "isGuest": false,
+      "gamesPlayed": 95,
+      "wins": 59,
+      "losses": 36,
+      "winRate": 62,
+      "favoriteColor": "green",
+      "xp": 2900,
+      "level": 10,
+      "createdAt": 1789114327817
+    },
+    "usr_quantum": {
+      "id": "usr_quantum",
+      "username": "QuantumPawn",
+      "avatar": "cyber-bot",
+      "isGuest": false,
+      "gamesPlayed": 80,
+      "wins": 48,
+      "losses": 32,
+      "winRate": 60,
+      "favoriteColor": "blue",
+      "xp": 2350,
+      "level": 8,
+      "createdAt": 1789114327817
+    },
+    "usr_ludoking": {
+      "id": "usr_ludoking",
+      "username": "LudoTitan",
+      "avatar": "trophy-hunter",
+      "isGuest": false,
+      "gamesPlayed": 65,
+      "wins": 38,
+      "losses": 27,
+      "winRate": 58,
+      "favoriteColor": "red",
+      "xp": 1900,
+      "level": 7,
+      "createdAt": 1789114327817
+    },
+    "guest_xzwkb3r7": {
+      "id": "guest_xzwkb3r7",
+      "username": "KING 123 FF",
+      "avatar": "dice-king",
+      "isGuest": true,
+      "gamesPlayed": 0,
+      "wins": 0,
+      "losses": 0,
+      "winRate": 0,
+      "favoriteColor": "red",
+      "xp": 0,
+      "level": 1,
+      "createdAt": 1791706956204
+    }
+  },
+  "matches": []
+}

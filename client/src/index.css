@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-950 text-slate-100 font-sans antialiased selection:bg-purple-500 selection:text-white min-h-screen overflow-x-hidden;
+    background: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #0f172a 60%, #020617 100%);
+  }
+}
+
+/* Glassmorphism helpers */
+.glass-panel {
+  background: rgba(30, 41, 59, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.5);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.8);
+}
+
+/* Token glow effects */
+.glow-red {
+  filter: drop-shadow(0 0 10px rgba(239, 68, 68, 0.8));
+}
+.glow-green {
+  filter: drop-shadow(0 0 10px rgba(16, 185, 129, 0.8));
+}
+.glow-yellow {
+  filter: drop-shadow(0 0 10px rgba(245, 158, 11, 0.8));
+}
+.glow-blue {
+  filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.8));
+}
+
+/* Board responsive aspect ratio */
+.board-container {
+  width: 100%;
+  max-width: min(88vw, 560px);
+  aspect-ratio: 1 / 1;
+}
+
+@media (min-height: 800px) and (min-width: 768px) {
+  .board-container {
+    max-width: 580px;
+  }
+}
