@@ -177,7 +177,8 @@ export const App: React.FC = () => {
 
   // Initialize Socket.IO connection
   useEffect(() => {
-    const socketUrl = window.location.hostname === 'localhost' ? 'http://localhost:3001' : window.location.origin;
+    const customUrl = import.meta.env.VITE_SERVER_URL || import.meta.env.VITE_SOCKET_URL;
+    const socketUrl = customUrl || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : window.location.origin);
     const socket = io(socketUrl, {
       transports: ['websocket', 'polling'],
       autoConnect: true,
