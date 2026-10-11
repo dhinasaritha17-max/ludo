@@ -86,6 +86,9 @@ export interface UserProfile {
   username: string;
   avatar: string;
   isGuest: boolean;
+  email?: string;
+  photoURL?: string;
+  authProvider?: 'google' | 'password' | 'guest';
   gamesPlayed: number;
   wins: number;
   losses: number;

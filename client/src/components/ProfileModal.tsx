@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile, PlayerColor } from '../types/index.js';
-import { X, User, Check, Flame, Trophy, Shield, Save, LogOut } from 'lucide-react';
+import { X, User, Check, Flame, Trophy, Shield, Save, LogOut, LogIn, Sparkles, Mail } from 'lucide-react';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -8,6 +8,8 @@ interface ProfileModalProps {
   user: UserProfile;
   onUpdateUser: (updated: Partial<UserProfile>) => void;
   onResetSession: () => void;
+  onOpenAuth: () => void;
+  onSignOut: () => void;
 }
 
 const AVATARS = [
@@ -34,6 +36,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   user,
   onUpdateUser,
   onResetSession,
+  onOpenAuth,
+  onSignOut,
 }) => {
   const [username, setUsername] = useState(user.username);
   const [avatar, setAvatar] = useState(user.avatar);
@@ -74,7 +78,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             <div>
               <h2 className="text-lg font-bold text-white">Player Profile</h2>
               <p className="text-xs text-slate-400">
-                {user.isGuest ? 'Guest Account' : 'Registered Member'} • Level {user.level}
+                {user.isGuest ? 'Guest Account' : `${user.authProvider === 'google' ? 'Google' : 'Verified'} Member`} • Level {user.level}
               </p>
             </div>
           </div>
@@ -88,6 +92,57 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto py-4 space-y-5 pr-1">
+          {/* Account Status Banner */}
+          {user.isGuest ? (
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-900/40 via-indigo-900/40 to-pink-900/40 border border-purple-500/30 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="w-5 h-5 text-pink-400 shrink-0" />
+                <div>
+                  <p className="text-xs font-bold text-white">Save Your Game Progress</p>
+                  <p className="text-[11px] text-slate-300">
+                    Sign in to keep your wins, XP, and unlock verified leaderboards.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenAuth();
+                }}
+                className="shrink-0 px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-purple-600/30 transition active:scale-95"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                Sign In
+              </button>
+            </div>
+          ) : (
+            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-emerald-950 text-emerald-400 flex items-center justify-center text-xs">
+                  <Check className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span>{user.email || 'Authenticated Player'}</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-900/60 text-purple-300 font-semibold uppercase">
+                      {user.authProvider || 'Firebase'}
+                    </span>
+                  </p>
+                  <p className="text-[11px] text-emerald-400">Account synced securely</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-rose-400 text-xs font-semibold flex items-center gap-1 transition"
+                title="Sign out of your account"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Sign Out
+              </button>
+            </div>
+          )}
           {/* Stats Summary Cards */}
           <div className="grid grid-cols-3 gap-2.5">
             <div className="glass-card rounded-2xl p-3 text-center border-slate-800">
@@ -192,15 +247,27 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 )}
               </button>
 
-              <button
-                type="button"
-                onClick={onResetSession}
-                className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 text-xs font-semibold flex items-center gap-1.5 transition"
-                title="Reset local guest identity"
-              >
-                <LogOut className="w-4 h-4" />
-                Reset
-              </button>
+              {user.isGuest ? (
+                <button
+                  type="button"
+                  onClick={onResetSession}
+                  className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 text-xs font-semibold flex items-center gap-1.5 transition"
+                  title="Reset local guest identity"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Reset Guest
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 text-xs font-semibold flex items-center gap-1.5 transition"
+                  title="Sign out of your account"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Sign Out
+                </button>
+              )}
             </div>
           </form>
         </div>

@@ -22,8 +22,10 @@ import { LeaderboardModal } from './components/LeaderboardModal.js';
 import { ProfileModal } from './components/ProfileModal.js';
 import { MatchmakingModal } from './components/MatchmakingModal.js';
 import { JoinRoomModal } from './components/JoinRoomModal.js';
+import { AuthModal } from './components/AuthModal.js';
 import { LudoClientEngine } from './engine/LudoClientEngine.js';
 import { soundEffects } from './audio/SoundEffects.js';
+import { onFirebaseAuthStateChanged, logOut, syncFirebaseUserWithBackend } from './firebase/authService.js';
 
 type ScreenView = 'home' | 'lobby' | 'game';
 
@@ -77,6 +79,7 @@ export const App: React.FC = () => {
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [isVictoryOpen, setIsVictoryOpen] = useState(false);
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
 
   // Rematch Votes
   const [rematchVotes, setRematchVotes] = useState<string[]>([]);
@@ -86,25 +89,44 @@ export const App: React.FC = () => {
   const socketRef = useRef<Socket | null>(null);
   const offlineBotTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Initialize User on Backend
+  // Initialize User on Backend if Guest
   useEffect(() => {
-    fetch('/api/auth/guest', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        existingId: user.id,
-        username: user.username,
-        avatar: user.avatar,
-      }),
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.user) {
-          setUser(data.user);
-          localStorage.setItem('ludoverse_user', JSON.stringify(data.user));
-        }
+    if (user.isGuest) {
+      fetch('/api/auth/guest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          existingId: user.id,
+          username: user.username,
+          avatar: user.avatar,
+        }),
       })
-      .catch(err => console.log('Backend sync offline fallback ready', err));
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && data.user) {
+            setUser(data.user);
+            localStorage.setItem('ludoverse_user', JSON.stringify(data.user));
+          }
+        })
+        .catch(err => console.log('Backend sync offline fallback ready', err));
+    }
+  }, []);
+
+  // Synchronize Firebase Authentication state
+  useEffect(() => {
+    const unsubscribe = onFirebaseAuthStateChanged(async firebaseUser => {
+      if (firebaseUser) {
+        try {
+          const currentGuestId = user.isGuest ? user.id : undefined;
+          const synced = await syncFirebaseUserWithBackend(firebaseUser, currentGuestId);
+          setUser(synced);
+          localStorage.setItem('ludoverse_user', JSON.stringify(synced));
+        } catch (err) {
+          console.error('Failed to sync Firebase authenticated user:', err);
+        }
+      }
+    });
+    return () => unsubscribe();
   }, []);
 
   // Initialize Socket.IO connection
@@ -521,6 +543,40 @@ export const App: React.FC = () => {
       .catch(console.error);
   };
 
+  // Handle Sign Out from Firebase
+  const handleSignOut = async () => {
+    try {
+      await logOut();
+    } catch (e) {
+      console.error('Sign out error', e);
+    }
+    const guestId = `guest_${Math.random().toString(36).slice(2, 10)}`;
+    const guestUser: UserProfile = {
+      id: guestId,
+      username: `Player_${guestId.slice(-4)}`,
+      avatar: 'dice-king',
+      isGuest: true,
+      gamesPlayed: 0,
+      wins: 0,
+      losses: 0,
+      winRate: 0,
+      favoriteColor: 'red',
+      xp: 0,
+      level: 1,
+      createdAt: Date.now(),
+    };
+    setUser(guestUser);
+    localStorage.setItem('ludoverse_user', JSON.stringify(guestUser));
+    setIsProfileOpen(false);
+  };
+
+  // Handle Authentication Success
+  const handleAuthSuccess = (authenticatedUser: UserProfile) => {
+    setUser(authenticatedUser);
+    localStorage.setItem('ludoverse_user', JSON.stringify(authenticatedUser));
+    setIsAuthOpen(false);
+  };
+
   // Reset Session
   const handleResetSession = () => {
     localStorage.removeItem('ludoverse_user');
@@ -535,6 +591,7 @@ export const App: React.FC = () => {
         onOpenProfile={() => setIsProfileOpen(true)}
         onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
         onOpenTutorial={() => setIsTutorialOpen(true)}
+        onOpenAuth={() => setIsAuthOpen(true)}
       />
 
       {/* Main Screen Content */}
@@ -548,6 +605,7 @@ export const App: React.FC = () => {
             onOpenTutorial={() => setIsTutorialOpen(true)}
             onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
             onClaimDailyReward={handleClaimDailyReward}
+            onOpenAuth={() => setIsAuthOpen(true)}
           />
         )}
 
@@ -619,6 +677,16 @@ export const App: React.FC = () => {
         user={user}
         onUpdateUser={handleUpdateUser}
         onResetSession={handleResetSession}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onSignOut={handleSignOut}
+      />
+
+      {/* Firebase Authentication Modal */}
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        currentGuestId={user.isGuest ? user.id : undefined}
+        onAuthSuccess={handleAuthSuccess}
       />
 
       {/* Leaderboard Modal */}

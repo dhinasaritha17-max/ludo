@@ -101,6 +101,17 @@ export class Database {
     return this.data.users[userId] || null;
   }
 
+  public getUserByEmail(email: string): UserProfile | null {
+    if (!email) return null;
+    const target = email.toLowerCase().trim();
+    for (const id in this.data.users) {
+      if (this.data.users[id].email?.toLowerCase().trim() === target) {
+        return this.data.users[id];
+      }
+    }
+    return null;
+  }
+
   public upsertUser(user: Partial<UserProfile> & { id: string }): UserProfile {
     const existing = this.data.users[user.id];
     const gamesPlayed = user.gamesPlayed ?? existing?.gamesPlayed ?? 0;
@@ -115,6 +126,9 @@ export class Database {
       username: user.username ?? existing?.username ?? `Player_${user.id.slice(0, 4)}`,
       avatar: user.avatar ?? existing?.avatar ?? 'dice-king',
       isGuest: user.isGuest ?? existing?.isGuest ?? true,
+      email: user.email ?? existing?.email,
+      photoURL: user.photoURL ?? existing?.photoURL,
+      authProvider: user.authProvider ?? existing?.authProvider ?? (user.isGuest ? 'guest' : 'password'),
       gamesPlayed,
       wins,
       losses,

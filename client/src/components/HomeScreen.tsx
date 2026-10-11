@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { UserProfile, GameMode } from '../types/index.js';
-import { Globe, Users, Bot, BookOpen, Gift, Trophy, Flame, Play, Sparkles } from 'lucide-react';
+import { Globe, Users, Bot, BookOpen, Gift, Trophy, Flame, Play, Sparkles, LogIn } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { soundEffects } from '../audio/SoundEffects.js';
 
@@ -12,6 +12,7 @@ interface HomeScreenProps {
   onOpenTutorial: () => void;
   onOpenLeaderboard: () => void;
   onClaimDailyReward: () => void;
+  onOpenAuth?: () => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
@@ -22,6 +23,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onOpenTutorial,
   onOpenLeaderboard,
   onClaimDailyReward,
+  onOpenAuth,
 }) => {
   const [claiming, setClaiming] = useState(false);
 
@@ -110,6 +112,25 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Guest Progress Notice */}
+      {user.isGuest && onOpenAuth && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-900/30 via-indigo-900/30 to-pink-900/30 border border-purple-500/30 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-center gap-2.5 text-xs text-slate-300 text-center sm:text-left">
+            <Sparkles className="w-4 h-4 text-pink-400 shrink-0" />
+            <span>
+              Playing as guest. Sign in with Google or Email to preserve your win rate and climb the global leaderboards!
+            </span>
+          </div>
+          <button
+            onClick={onOpenAuth}
+            className="shrink-0 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 transition active:scale-95 shadow-md shadow-purple-600/30 cursor-pointer"
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span>Sign In</span>
+          </button>
+        </div>
+      )}
 
       {/* Main Game Mode Grid */}
       <div className="space-y-4">

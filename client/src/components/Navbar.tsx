@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { UserProfile } from '../types/index.js';
-import { Volume2, VolumeX, Trophy, HelpCircle } from 'lucide-react';
+import { Volume2, VolumeX, Trophy, HelpCircle, LogIn } from 'lucide-react';
 import { soundEffects } from '../audio/SoundEffects.js';
 
 interface NavbarProps {
@@ -8,6 +8,7 @@ interface NavbarProps {
   onOpenProfile: () => void;
   onOpenLeaderboard: () => void;
   onOpenTutorial: () => void;
+  onOpenAuth: () => void;
 }
 
 const AVATAR_EMOJIS: Record<string, string> = {
@@ -26,6 +27,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenProfile,
   onOpenLeaderboard,
   onOpenTutorial,
+  onOpenAuth,
 }) => {
   const [muted, setMuted] = useState(!soundEffects.isEnabled());
 
@@ -90,13 +92,34 @@ export const Navbar: React.FC<NavbarProps> = ({
             <HelpCircle className="w-4 h-4 text-blue-400" />
           </button>
 
+          {/* Sign In CTA if Guest */}
+          {user.isGuest ? (
+            <button
+              onClick={onOpenAuth}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-xs font-bold shadow-md shadow-purple-600/30 transition active:scale-95 cursor-pointer"
+              title="Sign in to save your game rank and progress"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>Sign In</span>
+            </button>
+          ) : (
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-[10px] font-bold text-emerald-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>{user.authProvider === 'google' ? 'Google' : 'Account'}</span>
+            </span>
+          )}
+
           {/* User Profile Pill */}
           <button
             onClick={onOpenProfile}
             className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-2xl glass-card hover:bg-slate-800/90 border border-purple-500/30 transition text-left select-none cursor-pointer"
           >
-            <div className="w-7 h-7 rounded-full bg-purple-950 flex items-center justify-center text-sm border border-purple-500/50">
-              {AVATAR_EMOJIS[user.avatar] || '🎲'}
+            <div className="w-7 h-7 rounded-full bg-purple-950 flex items-center justify-center text-sm border border-purple-500/50 overflow-hidden">
+              {user.photoURL ? (
+                <img src={user.photoURL} alt={user.username} className="w-full h-full object-cover" />
+              ) : (
+                AVATAR_EMOJIS[user.avatar] || '🎲'
+              )}
             </div>
             <div className="hidden sm:block">
               <p className="text-xs font-bold text-slate-100 max-w-[90px] truncate leading-tight">
