@@ -83,10 +83,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return 'Authentication request cancelled.';
     }
     if (code === 'auth/unauthorized-domain') {
-      return 'Domain not authorized for Firebase auth. Please ensure localhost or your Vercel domain is authorized in Firebase Console.';
+      return 'Domain not authorized in Firebase. Please add your current domain (e.g. localhost or your vercel.app domain) to Firebase Console > Authentication > Settings > Authorized domains.';
     }
-    if (code === 'auth/network-request-failed' || err?.message?.includes('JSON') || err?.message?.includes('network')) {
-      return 'Network or configuration error connecting to Firebase. Please check your internet connection.';
+    if (code === 'auth/operation-not-allowed') {
+      return 'This sign-in method is not enabled. Please enable Email/Password and Google in Firebase Console > Authentication > Sign-in method.';
+    }
+    if (code === 'auth/network-request-failed') {
+      return 'Network request failed. Please check your internet connection.';
     }
     return err?.message || 'Authentication failed. Please check your credentials.';
   };
