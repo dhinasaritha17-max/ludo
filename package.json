@@ -7,7 +7,7 @@
     "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"magenta,cyan\" \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
     "dev:server": "npm run dev --workspace=server",
     "dev:client": "npm run dev --workspace=client",
-    "build": "npm run build --workspace=client && npm run build --workspace=server",
+    "build": "npm run build --workspace=client && npm run build --workspace=server && node -e \"const fs=require('fs'); fs.cpSync('./client/dist', './dist', {recursive:true});\"",
     "start": "npm run start --workspace=server",
     "test": "npm run test --workspace=server"
   },
