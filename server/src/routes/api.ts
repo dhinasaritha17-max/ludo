@@ -131,25 +131,12 @@ router.post('/profile/daily-reward', (req, res) => {
   const { id } = req.body;
   if (!id) return res.status(400).json({ error: 'Missing user ID' });
 
-  const user = db.getUser(id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-
-  const now = Date.now();
-  const ONE_DAY = 24 * 60 * 60 * 1000;
-
-  if (user.lastDailyReward && now - user.lastDailyReward < ONE_DAY) {
-    const hoursLeft = Math.ceil((ONE_DAY - (now - user.lastDailyReward)) / (60 * 60 * 1000));
-    return res.status(400).json({ error: `Daily reward already claimed. Available in ${hoursLeft} hours.` });
+  const result = db.claimDailyReward(id);
+  if (!result.success) {
+    return res.status(400).json({ error: result.error });
   }
 
-  const rewardXp = 150;
-  const updated = db.upsertUser({
-    id,
-    xp: user.xp + rewardXp,
-    lastDailyReward: now,
-  });
-
-  res.json({ success: true, rewardXp, user: updated });
+  res.json({ success: true, rewardCoins: 200, rewardXp: 150, user: result.user });
 });
 
 // Get Leaderboard

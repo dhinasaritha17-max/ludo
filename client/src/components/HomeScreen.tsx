@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { UserProfile, GameMode } from '../types/index.js';
-import { Globe, Users, Bot, BookOpen, Gift, Trophy, Flame, Play, Sparkles, LogIn } from 'lucide-react';
+import { UserProfile, GameMode, Room } from '../types/index.js';
+import { Globe, Users, Bot, BookOpen, Gift, Trophy, Flame, Play, Sparkles, LogIn, RotateCcw } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { soundEffects } from '../audio/SoundEffects.js';
 
 interface HomeScreenProps {
   user: UserProfile;
+  recoverableMatch?: Room | null;
+  onResumeMatch?: () => void;
   onPlayOnline: () => void;
   onPlayWithFriends: () => void;
   onPlayWithComputer: (mode: GameMode) => void;
@@ -17,6 +19,8 @@ interface HomeScreenProps {
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   user,
+  recoverableMatch,
+  onResumeMatch,
   onPlayOnline,
   onPlayWithFriends,
   onPlayWithComputer,
@@ -45,6 +49,36 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   return (
     <div className="w-full max-w-4xl mx-auto px-4 py-6 sm:py-10 space-y-8 animate-in fade-in duration-300">
+      {/* Active Match Reconnection Recovery Banner */}
+      {recoverableMatch && onResumeMatch && (
+        <div className="relative overflow-hidden rounded-3xl p-5 sm:p-6 bg-gradient-to-r from-purple-900/90 via-indigo-950/90 to-pink-900/90 border-2 border-purple-500 shadow-2xl shadow-purple-600/30 flex flex-col sm:flex-row items-center justify-between gap-4 animate-pulse">
+          <div className="flex items-center gap-4 text-center sm:text-left">
+            <div className="w-12 h-12 rounded-2xl bg-purple-500/30 border border-purple-400 flex items-center justify-center shrink-0">
+              <RotateCcw className="w-6 h-6 text-purple-200 animate-spin" style={{ animationDuration: '6s' }} />
+            </div>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase tracking-wider mb-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                Active Match In Progress
+              </div>
+              <h3 className="text-base sm:text-lg font-black text-white">
+                Unfinished Match Found (Room #{recoverableMatch.code})
+              </h3>
+              <p className="text-xs text-purple-200">
+                You have a live {recoverableMatch.mode.toUpperCase()} game waiting in Cloud Firestore. Rejoin now!
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onResumeMatch}
+            className="w-full sm:w-auto px-6 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-sm shadow-xl shadow-emerald-600/40 flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer shrink-0"
+          >
+            <Play className="w-4 h-4 fill-white" />
+            Resume Match
+          </button>
+        </div>
+      )}
+
       {/* Hero Showcase Card */}
       <div className="relative glass-panel rounded-3xl p-6 sm:p-10 border-purple-500/30 overflow-hidden shadow-2xl">
         {/* Ambient Glows */}

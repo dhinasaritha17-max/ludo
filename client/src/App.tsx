@@ -9,6 +9,9 @@ import {
   ChatMessage,
   ReactionPayload,
   GameMove,
+  Player,
+  MatchRecord,
+  MatchPlayerSummary,
 } from './types/index.js';
 import { Navbar } from './components/Navbar.js';
 import { HomeScreen } from './components/HomeScreen.js';
@@ -26,6 +29,14 @@ import { AuthModal } from './components/AuthModal.js';
 import { LudoClientEngine } from './engine/LudoClientEngine.js';
 import { soundEffects } from './audio/SoundEffects.js';
 import { onFirebaseAuthStateChanged, logOut, syncFirebaseUserWithBackend } from './firebase/authService.js';
+import {
+  savePlayerProfileToFirestore,
+  subscribeToPlayerProfile,
+  syncRoomToFirestore,
+  getActiveMatchForUser,
+  recordCompletedMatchInFirestore,
+  claimDailyRewardInFirestore,
+} from './firebase/firestoreService.js';
 
 type ScreenView = 'home' | 'lobby' | 'game';
 
@@ -35,7 +46,10 @@ export const App: React.FC = () => {
     const saved = localStorage.getItem('ludoverse_user');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed.coins === undefined) parsed.coins = 500;
+        if (parsed.lastActive === undefined) parsed.lastActive = Date.now();
+        return parsed;
       } catch (e) {
         console.error('Failed to parse cached user', e);
       }
@@ -51,11 +65,16 @@ export const App: React.FC = () => {
       losses: 0,
       winRate: 0,
       favoriteColor: 'red',
+      coins: 500,
       xp: 0,
       level: 1,
+      lastActive: Date.now(),
       createdAt: Date.now(),
     };
   });
+
+  // Reconnection / Active Match Recovery State
+  const [recoverableMatch, setRecoverableMatch] = useState<Room | null>(null);
 
   // Navigation State
   const [currentView, setCurrentView] = useState<ScreenView>('home');
@@ -112,8 +131,10 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Synchronize Firebase Authentication state
+  // Synchronize Firebase Authentication state & Firestore Database
   useEffect(() => {
+    let unsubProfile: (() => void) | undefined;
+
     const unsubscribe = onFirebaseAuthStateChanged(async firebaseUser => {
       if (firebaseUser) {
         try {
@@ -121,13 +142,38 @@ export const App: React.FC = () => {
           const synced = await syncFirebaseUserWithBackend(firebaseUser, currentGuestId);
           setUser(synced);
           localStorage.setItem('ludoverse_user', JSON.stringify(synced));
+
+          // Real-time subscription to Cloud Firestore user profile
+          unsubProfile = subscribeToPlayerProfile(firebaseUser.uid, firestoreProfile => {
+            if (firestoreProfile) {
+              setUser(firestoreProfile);
+              localStorage.setItem('ludoverse_user', JSON.stringify(firestoreProfile));
+            }
+          });
+
+          // Check for recoverable match
+          getActiveMatchForUser(firebaseUser.uid).then(activeMatch => {
+            if (activeMatch && activeMatch.status === 'in_progress') {
+              setRecoverableMatch(activeMatch);
+            }
+          }).catch(console.error);
         } catch (err) {
           console.error('Failed to sync Firebase authenticated user:', err);
         }
+      } else {
+        getActiveMatchForUser(user.id).then(activeMatch => {
+          if (activeMatch && activeMatch.status === 'in_progress') {
+            setRecoverableMatch(activeMatch);
+          }
+        }).catch(console.error);
       }
     });
-    return () => unsubscribe();
-  }, []);
+
+    return () => {
+      unsubscribe();
+      if (unsubProfile) unsubProfile();
+    };
+  }, [user.id]);
 
   // Initialize Socket.IO connection
   useEffect(() => {
@@ -144,6 +190,7 @@ export const App: React.FC = () => {
       setMyColor('red');
       setCurrentView('lobby');
       setIsJoinRoomOpen(false);
+      syncRoomToFirestore(room).catch(console.error);
     });
 
     socket.on('room_joined', ({ room, color }: { room: Room; color: PlayerColor }) => {
@@ -152,6 +199,7 @@ export const App: React.FC = () => {
       setCurrentView('lobby');
       setIsJoinRoomOpen(false);
       setIsMatchmakingOpen(false);
+      syncRoomToFirestore(room).catch(console.error);
     });
 
     socket.on('match_found', ({ room }: { room: Room }) => {
@@ -165,10 +213,12 @@ export const App: React.FC = () => {
       }
       setIsMatchmakingOpen(false);
       setCurrentView('lobby');
+      syncRoomToFirestore(room).catch(console.error);
     });
 
     socket.on('room_updated', ({ room }: { room: Room }) => {
       setRoom(room);
+      syncRoomToFirestore(room).catch(console.error);
     });
 
     socket.on('game_started', ({ room }: { room: Room }) => {
@@ -177,6 +227,7 @@ export const App: React.FC = () => {
       setCurrentView('game');
       setIsVictoryOpen(false);
       setRematchVotes([]);
+      syncRoomToFirestore(room).catch(console.error);
     });
 
     socket.on('game_state_synced', ({ gameState, rollResult, moveResult }: {
@@ -225,6 +276,50 @@ export const App: React.FC = () => {
     socket.on('game_completed', ({ winner, room }: { winner: PlayerColor; room: Room }) => {
       setRoom(room);
       setIsVictoryOpen(true);
+      setRecoverableMatch(null);
+
+      // Sync room completion to Cloud Firestore
+      syncRoomToFirestore({ ...room, status: 'completed' }).catch(console.error);
+
+      // Persist Completed Match to Cloud Firestore atomically
+      const playerSummaries: MatchPlayerSummary[] = (Object.values(room.players) as (Player | null)[])
+        .filter((p): p is Player => p !== null)
+        .map(p => {
+          const isWinner = p.color === winner;
+          return {
+            id: p.id,
+            name: p.name,
+            avatar: p.avatar,
+            color: p.color,
+            isBot: p.isBot,
+            rank: isWinner ? 1 : 2,
+            coinsGained: isWinner ? 150 : 20,
+            xpGained: isWinner ? 100 : 25,
+          };
+        });
+
+      const matchRecord: MatchRecord = {
+        id: `match_${room.id}_${Date.now()}`,
+        roomId: room.id,
+        roomCode: room.code,
+        mode: room.mode,
+        startedAt: room.matchStartTime || room.createdAt,
+        endedAt: Date.now(),
+        durationSeconds: Math.floor((Date.now() - (room.matchStartTime || room.createdAt)) / 1000),
+        winner,
+        winnerId: room.players[winner]?.id,
+        winnerName: room.players[winner]?.name,
+        players: playerSummaries,
+        playerIds: playerSummaries.map(p => p.id),
+        turnsCount: room.gameState?.turnCount || 1,
+        status: 'completed',
+        timestamp: Date.now(),
+      };
+
+      recordCompletedMatchInFirestore(matchRecord).catch(err => {
+        console.error('Failed to record match in Firestore:', err);
+      });
+
       // Refresh profile stats
       fetch(`/api/profile/${user.id}`)
         .then(res => res.json())
@@ -506,28 +601,130 @@ export const App: React.FC = () => {
 
     if (moveRes.state.status === 'completed') {
       setIsVictoryOpen(true);
+      const isWinner = moveRes.state.winner === 'red';
+      const playerSummaries: MatchPlayerSummary[] = [
+        {
+          id: user.id,
+          name: user.username,
+          avatar: user.avatar,
+          color: 'red',
+          isBot: false,
+          rank: isWinner ? 1 : 2,
+          coinsGained: isWinner ? 100 : 20,
+          xpGained: isWinner ? 75 : 20,
+        },
+        {
+          id: 'bot_yellow',
+          name: 'NovaAI (AI)',
+          avatar: 'phoenix',
+          color: 'yellow',
+          isBot: true,
+          rank: isWinner ? 2 : 1,
+        },
+      ];
+
+      const matchRecord: MatchRecord = {
+        id: `offline_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        roomId: 'offline_practice',
+        roomCode: 'SOLO',
+        mode: moveRes.state.mode,
+        startedAt: Date.now() - 120000,
+        endedAt: Date.now(),
+        durationSeconds: 120,
+        winner: moveRes.state.winner || 'red',
+        winnerId: isWinner ? user.id : 'bot_yellow',
+        winnerName: isWinner ? user.username : 'NovaAI (AI)',
+        players: playerSummaries,
+        playerIds: [user.id],
+        turnsCount: moveRes.state.turnCount || 1,
+        status: 'completed',
+        timestamp: Date.now(),
+      };
+
+      recordCompletedMatchInFirestore(matchRecord).catch(console.error);
+
+      // Award coins locally
+      setUser(prev => {
+        const newWins = isWinner ? prev.wins + 1 : prev.wins;
+        const newLosses = !isWinner ? prev.losses + 1 : prev.losses;
+        const total = prev.gamesPlayed + 1;
+        const updated: UserProfile = {
+          ...prev,
+          gamesPlayed: total,
+          wins: newWins,
+          losses: newLosses,
+          winRate: Math.round((newWins / total) * 100),
+          coins: prev.coins + (isWinner ? 100 : 20),
+          xp: prev.xp + (isWinner ? 75 : 20),
+          level: Math.floor((prev.xp + (isWinner ? 75 : 20)) / 300) + 1,
+          lastActive: Date.now(),
+        };
+        savePlayerProfileToFirestore(updated).catch(console.error);
+        localStorage.setItem('ludoverse_user', JSON.stringify(updated));
+        return updated;
+      });
     }
   };
 
-  // User Profile Update
+  // Reconnection / Active Match Resume Handler
+  const handleResumeMatch = () => {
+    if (!recoverableMatch) return;
+    setIsOfflineMode(false);
+    setRoom(recoverableMatch);
+
+    for (const col of ['red', 'green', 'yellow', 'blue'] as PlayerColor[]) {
+      if (recoverableMatch.players[col]?.id === user.id) {
+        setMyColor(col);
+        break;
+      }
+    }
+
+    if (recoverableMatch.gameState) {
+      setGameState(recoverableMatch.gameState);
+      setCurrentView('game');
+    } else {
+      setCurrentView('lobby');
+    }
+
+    socketRef.current?.emit('join_room', {
+      roomCodeOrId: recoverableMatch.code || recoverableMatch.id,
+      user: { id: user.id, name: user.username, avatar: user.avatar },
+    });
+
+    setRecoverableMatch(null);
+  };
+
+  // User Profile Update (Firestore & Local DB)
   const handleUpdateUser = (updated: Partial<UserProfile>) => {
+    const updatedProfile: UserProfile = { ...user, ...updated, lastActive: Date.now() };
+    setUser(updatedProfile);
+    localStorage.setItem('ludoverse_user', JSON.stringify(updatedProfile));
+
+    // Save to Cloud Firestore
+    savePlayerProfileToFirestore(updatedProfile).catch(console.error);
+
+    // Save to Server backend
     fetch('/api/profile/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: user.id, ...updated }),
     })
       .then(res => res.json())
-      .then(d => {
-        if (d.success) {
-          setUser(d.user);
-          localStorage.setItem('ludoverse_user', JSON.stringify(d.user));
-        }
-      })
       .catch(console.error);
   };
 
-  // Daily Reward Claim
-  const handleClaimDailyReward = () => {
+  // Daily Reward Claim (Atomic Transaction in Firestore)
+  const handleClaimDailyReward = async () => {
+    try {
+      const claimRes = await claimDailyRewardInFirestore(user.id);
+      if (claimRes.success && claimRes.user) {
+        setUser(claimRes.user);
+        localStorage.setItem('ludoverse_user', JSON.stringify(claimRes.user));
+      }
+    } catch (e) {
+      console.error('Firestore daily reward error:', e);
+    }
+
     fetch('/api/profile/daily-reward', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -535,7 +732,7 @@ export const App: React.FC = () => {
     })
       .then(res => res.json())
       .then(d => {
-        if (d.success) {
+        if (d.success && d.user) {
           setUser(d.user);
           localStorage.setItem('ludoverse_user', JSON.stringify(d.user));
         }
@@ -561,8 +758,10 @@ export const App: React.FC = () => {
       losses: 0,
       winRate: 0,
       favoriteColor: 'red',
+      coins: 500,
       xp: 0,
       level: 1,
+      lastActive: Date.now(),
       createdAt: Date.now(),
     };
     setUser(guestUser);
@@ -574,6 +773,7 @@ export const App: React.FC = () => {
   const handleAuthSuccess = (authenticatedUser: UserProfile) => {
     setUser(authenticatedUser);
     localStorage.setItem('ludoverse_user', JSON.stringify(authenticatedUser));
+    savePlayerProfileToFirestore(authenticatedUser).catch(console.error);
     setIsAuthOpen(false);
   };
 
@@ -599,6 +799,8 @@ export const App: React.FC = () => {
         {currentView === 'home' && (
           <HomeScreen
             user={user}
+            recoverableMatch={recoverableMatch}
+            onResumeMatch={handleResumeMatch}
             onPlayOnline={() => setIsMatchmakingOpen(true)}
             onPlayWithFriends={() => setIsJoinRoomOpen(true)}
             onPlayWithComputer={mode => handleStartOfflinePractice(mode)}

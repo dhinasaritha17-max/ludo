@@ -12,6 +12,11 @@ import {
   User as FirebaseUser,
 } from 'firebase/auth';
 
+import {
+  getFirestore,
+  Firestore,
+} from 'firebase/firestore';
+
 // Firebase credentials provided for project ludo-a2586
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBdY_2dMiJxSKtMrkZKFKmLyyAzBYxfLJ4",
@@ -23,11 +28,14 @@ export const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-V5F8W22T4L",
 };
 
-// Initialize Firebase App singleton safely
+// Initialize Firebase App singleton safely (Reusing existing config, never initializing twice)
 export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 // Initialize Firebase Authentication
 export const auth = getAuth(app);
+
+// Initialize Cloud Firestore Database
+export const db: Firestore = getFirestore(app);
 
 // Providers
 export const googleProvider = new GoogleAuthProvider();

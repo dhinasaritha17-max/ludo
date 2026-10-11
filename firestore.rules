@@ -1,0 +1,218 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: {userId} (matches Firebase Auth request.auth.uid)
+// Fields:
+//   - id: string (required, immutable)
+//   - username: string (required, 1-30 chars)
+//   - avatar: string (required, allowed avatar id)
+//   - isGuest: bool (required)
+//   - email: string (optional)
+//   - photoURL: string (optional)
+//   - authProvider: string (optional, e.g. 'google', 'password', 'guest')
+//   - gamesPlayed: int (required, >= 0)
+//   - wins: int (required, >= 0)
+//   - losses: int (required, >= 0)
+//   - winRate: int (required, 0-100)
+//   - favoriteColor: string (required, 'red'|'green'|'yellow'|'blue')
+//   - coins: int (required, >= 0)
+//   - xp: int (required, >= 0)
+//   - level: int (required, >= 1)
+//   - lastActive: number (required)
+//   - lastDailyReward: number (optional)
+//   - createdAt: number (required)
+//
+// Collection: rooms
+// Document ID: {roomId}
+// Fields:
+//   - id: string (required)
+//   - code: string (required, 6-char uppercase code)
+//   - mode: string (required, '2p' | '4p')
+//   - isPrivate: bool (required)
+//   - status: string (required, 'waiting' | 'in_progress' | 'completed' | 'cancelled')
+//   - hostId: string (required)
+//   - players: map (required, map of player slot objects)
+//   - playerIds: list (required, user IDs in room)
+//   - gameState: map (optional, full board tokens and turn state)
+//   - createdAt: number (required)
+//   - updatedAt: number (required)
+//
+// Collection: matches
+// Document ID: {matchId}
+// Fields:
+//   - id: string (required)
+//   - roomCode: string (required)
+//   - mode: string (required, '2p' | '4p')
+//   - winner: string (required, 'red'|'green'|'yellow'|'blue')
+//   - winnerId: string (required)
+//   - winnerName: string (required)
+//   - durationSeconds: int (required, >= 0)
+//   - playerIds: list (required, participating user IDs)
+//   - players: list (required, participant summaries and rankings)
+//   - timestamp: number (required)
+//
+// Collection: leaderboards
+// Document ID: {userId}
+// Fields:
+//   - userId: string (required)
+//   - username: string (required)
+//   - avatar: string (required)
+//   - wins: int (required, >= 0)
+//   - gamesPlayed: int (required, >= 0)
+//   - winRate: int (required, 0-100)
+//   - coins: int (optional, >= 0)
+//   - xp: int (required, >= 0)
+//   - updatedAt: number (required)
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidColor(c) {
+      return c in ['red', 'green', 'yellow', 'blue'];
+    }
+
+    function isValidMode(m) {
+      return m in ['2p', '4p'];
+    }
+
+    function isValidRoomStatus(s) {
+      return s in ['waiting', 'in_progress', 'completed', 'cancelled'];
+    }
+
+    // -------------------------------------------------------------
+    // Validator: User Profile
+    // -------------------------------------------------------------
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['id', 'username', 'avatar', 'gamesPlayed', 'wins', 'losses', 'winRate', 'xp', 'level'])
+        && data.id is string
+        && data.username is string && data.username.size() >= 1 && data.username.size() <= 40
+        && data.avatar is string
+        && data.gamesPlayed is int && data.gamesPlayed >= 0
+        && data.wins is int && data.wins >= 0
+        && data.losses is int && data.losses >= 0
+        && data.winRate is int && data.winRate >= 0 && data.winRate <= 100
+        && data.xp is int && data.xp >= 0
+        && data.level is int && data.level >= 1
+        && (!('coins' in data) || (data.coins is int && data.coins >= 0))
+        && (!('favoriteColor' in data) || isValidColor(data.favoriteColor));
+    }
+
+    // -------------------------------------------------------------
+    // Validator: Room
+    // -------------------------------------------------------------
+    function isValidRoom(data) {
+      return data.keys().hasAll(['id', 'code', 'mode', 'status', 'hostId', 'playerIds'])
+        && data.id is string
+        && data.code is string && data.code.size() == 6
+        && isValidMode(data.mode)
+        && isValidRoomStatus(data.status)
+        && data.hostId is string
+        && data.playerIds is list;
+    }
+
+    // -------------------------------------------------------------
+    // Validator: Match Record
+    // -------------------------------------------------------------
+    function isValidMatch(data) {
+      return data.keys().hasAll(['id', 'roomCode', 'mode', 'winner', 'winnerId', 'winnerName', 'playerIds', 'players', 'timestamp'])
+        && data.id is string
+        && data.roomCode is string
+        && isValidMode(data.mode)
+        && isValidColor(data.winner)
+        && data.winnerId is string
+        && data.winnerName is string
+        && data.playerIds is list
+        && data.players is list;
+    }
+
+    // -------------------------------------------------------------
+    // Validator: Leaderboard Entry
+    // -------------------------------------------------------------
+    function isValidLeaderboard(data) {
+      return data.keys().hasAll(['userId', 'username', 'avatar', 'wins', 'gamesPlayed', 'xp'])
+        && data.userId is string
+        && data.username is string
+        && data.avatar is string
+        && data.wins is int && data.wins >= 0
+        && data.gamesPlayed is int && data.gamesPlayed >= 0
+        && data.xp is int && data.xp >= 0;
+    }
+
+    // =============================================================
+    // Collection Rules
+    // =============================================================
+
+    // Users Collection
+    match /users/{userId} {
+      // Authenticated users can read player profiles for matchmaking & display
+      allow read: if isAuthenticated();
+
+      // Owner can create or update their own profile with validated data
+      allow create: if isOwner(userId)
+        && request.resource.data.id == userId
+        && isValidUserProfile(request.resource.data);
+
+      allow update: if isAuthenticated()
+        && request.resource.data.id == resource.data.id
+        && isValidUserProfile(request.resource.data);
+
+      allow delete: if false;
+    }
+
+    // Rooms Collection
+    match /rooms/{roomId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated()
+        && isValidRoom(request.resource.data);
+
+      allow update: if isAuthenticated()
+        && (request.auth.uid in resource.data.playerIds || request.auth.uid == resource.data.hostId || resource.data.playerIds.size() == 0)
+        && isValidRoom(request.resource.data);
+
+      allow delete: if false;
+    }
+
+    // Match Records Collection (Immutable History)
+    match /matches/{matchId} {
+      allow read: if isAuthenticated();
+
+      // Participating authenticated players can record a completed match
+      allow create: if isAuthenticated()
+        && request.auth.uid in request.resource.data.playerIds
+        && isValidMatch(request.resource.data);
+
+      allow update, delete: if false;
+    }
+
+    // Leaderboards Collection
+    match /leaderboards/{userId} {
+      allow read: if true;
+
+      allow create, update: if isAuthenticated()
+        && (request.auth.uid == userId || request.auth.uid == request.resource.data.userId)
+        && isValidLeaderboard(request.resource.data);
+
+      allow delete: if false;
+    }
+
+    // Default Deny All Others
+    match /{document=**} {
+      allow read, write: false;
+    }
+  }
+}

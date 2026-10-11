@@ -1,24 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { UserProfile, LeaderboardEntry, PlayerColor, GameMode } from '../types/index.js';
-
-export interface MatchRecord {
-  id: string;
-  roomCode: string;
-  mode: GameMode;
-  winner: PlayerColor;
-  winnerId: string;
-  winnerName: string;
-  durationSeconds: number;
-  players: Array<{
-    id: string;
-    name: string;
-    color: PlayerColor;
-    isBot: boolean;
-    rank: number;
-  }>;
-  timestamp: number;
-}
+import { UserProfile, LeaderboardEntry, PlayerColor, GameMode, MatchRecord } from '../types/index.js';
 
 interface DatabaseSchema {
   users: Record<string, UserProfile>;
@@ -88,8 +70,10 @@ export class Database {
           losses: u.losses!,
           winRate: u.winRate!,
           favoriteColor: u.favoriteColor!,
+          coins: 1000,
           xp: u.xp!,
           level: u.level!,
+          lastActive: Date.now(),
           createdAt: Date.now() - 86400000 * 30,
         };
       }
@@ -118,8 +102,10 @@ export class Database {
     const wins = user.wins ?? existing?.wins ?? 0;
     const losses = user.losses ?? existing?.losses ?? 0;
     const winRate = gamesPlayed > 0 ? Math.round((wins / gamesPlayed) * 100) : 0;
+    const coins = user.coins ?? existing?.coins ?? 500;
     const xp = user.xp ?? existing?.xp ?? 0;
     const level = Math.floor(xp / 300) + 1;
+    const lastActive = user.lastActive ?? Date.now();
 
     const updated: UserProfile = {
       id: user.id,
@@ -134,8 +120,10 @@ export class Database {
       losses,
       winRate,
       favoriteColor: user.favoriteColor ?? existing?.favoriteColor ?? 'red',
+      coins,
       xp,
       level,
+      lastActive,
       lastDailyReward: user.lastDailyReward ?? existing?.lastDailyReward,
       createdAt: existing?.createdAt ?? Date.now(),
     };
@@ -143,6 +131,29 @@ export class Database {
     this.data.users[user.id] = updated;
     this.persist();
     return updated;
+  }
+
+  public claimDailyReward(userId: string): { success: boolean; user?: UserProfile; error?: string } {
+    const user = this.getUser(userId);
+    if (!user) return { success: false, error: 'User not found' };
+
+    const now = Date.now();
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+
+    if (user.lastDailyReward && now - user.lastDailyReward < ONE_DAY) {
+      const hoursLeft = Math.ceil((ONE_DAY - (now - user.lastDailyReward)) / (60 * 60 * 1000));
+      return { success: false, error: `Daily reward already claimed. Available in ${hoursLeft} hours.` };
+    }
+
+    const updated = this.upsertUser({
+      id: userId,
+      coins: (user.coins || 500) + 200,
+      xp: user.xp + 150,
+      lastDailyReward: now,
+      lastActive: now,
+    });
+
+    return { success: true, user: updated };
   }
 
   public recordMatch(match: MatchRecord) {
@@ -158,12 +169,18 @@ export class Database {
       if (user) {
         const isWinner = p.rank === 1;
         const xpGain = isWinner ? 100 : 30;
+        const coinGain = isWinner ? 150 : 50;
+        p.xpGained = xpGain;
+        p.coinsGained = coinGain;
+
         this.upsertUser({
           id: p.id,
           gamesPlayed: user.gamesPlayed + 1,
           wins: isWinner ? user.wins + 1 : user.wins,
           losses: isWinner ? user.losses : user.losses + 1,
+          coins: user.coins + coinGain,
           xp: user.xp + xpGain,
+          lastActive: Date.now(),
         });
       }
     }
@@ -183,6 +200,7 @@ export class Database {
       wins: u.wins,
       gamesPlayed: u.gamesPlayed,
       winRate: u.winRate,
+      coins: u.coins,
       xp: u.xp,
     }));
   }
@@ -196,3 +214,5 @@ export class Database {
       .slice(0, limit);
   }
 }
+
+export const database = Database.getInstance();

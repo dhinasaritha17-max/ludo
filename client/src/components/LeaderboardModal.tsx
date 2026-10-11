@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { LeaderboardEntry } from '../types/index.js';
-import { X, Trophy, Medal, Flame } from 'lucide-react';
+import { X, Trophy, Medal, Flame, Sparkles } from 'lucide-react';
+import { subscribeToGlobalLeaderboard } from '../firebase/firestoreService.js';
 
 interface LeaderboardModalProps {
   isOpen: boolean;
@@ -24,18 +25,32 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({ isOpen, onCl
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (isOpen) {
-      setLoading(true);
-      fetch('/api/leaderboard')
-        .then(res => res.json())
-        .then(data => {
-          if (data.success) {
-            setEntries(data.leaderboard);
-          }
-        })
-        .catch(err => console.error('Failed to load leaderboard', err))
-        .finally(() => setLoading(false));
-    }
+    if (!isOpen) return;
+
+    setLoading(true);
+
+    // 1. Subscribe to Real-Time Cloud Firestore Leaderboard
+    const unsubscribe = subscribeToGlobalLeaderboard(30, (firestoreEntries) => {
+      if (firestoreEntries && firestoreEntries.length > 0) {
+        setEntries(firestoreEntries);
+        setLoading(false);
+      } else {
+        // Fallback to local server API if Firestore is empty or initializing
+        fetch('/api/leaderboard')
+          .then(res => res.json())
+          .then(data => {
+            if (data.success && data.leaderboard) {
+              setEntries(data.leaderboard);
+            }
+          })
+          .catch(err => console.error('Fallback leaderboard load error:', err))
+          .finally(() => setLoading(false));
+      }
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -49,10 +64,14 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({ isOpen, onCl
             <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
               <Trophy className="w-5 h-5" />
             </div>
-            <div>
-              <h2 className="text-lg font-bold text-white">Global Leaderboard</h2>
-              <p className="text-xs text-slate-400">Top LudoVerse Champions Worldwide</p>
-            </div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-white">Global Leaderboard</h2>
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-500/40">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Live Sync
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">Ranked by Wins & XP in Cloud Firestore</p>
           </div>
           <button
             onClick={onClose}

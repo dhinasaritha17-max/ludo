@@ -343,14 +343,18 @@ export class RoomManager {
         };
       });
 
+    const playerIds = playerList.map(p => p.id);
+
     this.db.recordMatch({
       id: uuidv4(),
+      roomId: room.id,
       roomCode: room.code,
       mode: room.mode,
       winner: winnerColor,
       winnerId: winnerPlayer.id,
       winnerName: winnerPlayer.name,
       durationSeconds: duration,
+      playerIds,
       players: playerList,
       timestamp: Date.now(),
     });

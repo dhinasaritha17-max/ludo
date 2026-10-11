@@ -58,6 +58,7 @@ export interface GameState {
     timestamp: number;
   } | null;
   turnTimeoutSeconds: number;
+  turnCount?: number;
 }
 
 export interface ChatMessage {
@@ -94,10 +95,41 @@ export interface UserProfile {
   losses: number;
   winRate: number;
   favoriteColor: PlayerColor;
+  coins: number;
   xp: number;
   level: number;
+  lastActive: number;
   lastDailyReward?: number;
   createdAt: number;
+}
+
+export interface MatchPlayerSummary {
+  id: string;
+  name: string;
+  avatar?: string;
+  color: PlayerColor;
+  isBot: boolean;
+  rank: number;
+  coinsGained?: number;
+  xpGained?: number;
+}
+
+export interface MatchRecord {
+  id: string;
+  roomId?: string;
+  roomCode?: string;
+  mode: GameMode;
+  winner: PlayerColor;
+  winnerId?: string;
+  winnerName?: string;
+  durationSeconds?: number;
+  playerIds: string[];
+  players: MatchPlayerSummary[];
+  turnsCount?: number;
+  startedAt?: number;
+  endedAt?: number;
+  status?: 'completed' | 'cancelled';
+  timestamp: number;
 }
 
 export interface LeaderboardEntry {
@@ -108,5 +140,6 @@ export interface LeaderboardEntry {
   wins: number;
   gamesPlayed: number;
   winRate: number;
+  coins?: number;
   xp: number;
 }
