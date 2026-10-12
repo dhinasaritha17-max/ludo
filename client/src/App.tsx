@@ -28,6 +28,7 @@ import { JoinRoomModal } from './components/JoinRoomModal.js';
 import { AuthModal } from './components/AuthModal.js';
 import { LudoClientEngine } from './engine/LudoClientEngine.js';
 import { soundEffects } from './audio/SoundEffects.js';
+import { webrtcManager, WebRTCState } from './webrtc/WebRTCManager.js';
 import { onFirebaseAuthStateChanged, logOut, syncFirebaseUserWithBackend } from './firebase/authService.js';
 import {
   savePlayerProfileToFirestore,
@@ -104,9 +105,26 @@ export const App: React.FC = () => {
   const [rematchVotes, setRematchVotes] = useState<string[]>([]);
   const [requiredRematchVotes, setRequiredRematchVotes] = useState(1);
 
+  // WebRTC Voice & Video State
+  const [webrtcState, setWebrtcState] = useState<WebRTCState>(webrtcManager.getState());
+  const [isMultiplayerRolling, setIsMultiplayerRolling] = useState(false);
+  const [lastMove, setLastMove] = useState<GameMove | null>(null);
+
+  // Subscribe to WebRTC manager
+  useEffect(() => {
+    return webrtcManager.subscribe(setWebrtcState);
+  }, []);
+
   // Socket reference
   const socketRef = useRef<Socket | null>(null);
   const offlineBotTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Synchronize WebRTC room and user metadata
+  useEffect(() => {
+    if (room && socketRef.current) {
+      webrtcManager.init(socketRef.current, room.id, user.id, user.username, myColor);
+    }
+  }, [room?.id, user.id, user.username, myColor]);
 
   // Initialize User on Backend if Guest
   useEffect(() => {
@@ -231,25 +249,31 @@ export const App: React.FC = () => {
       syncRoomToFirestore(room).catch(console.error);
     });
 
+    socket.on('dice_rolling', () => {
+      setIsMultiplayerRolling(true);
+      soundEffects.playDiceShake();
+    });
+
     socket.on('game_state_synced', ({ gameState, rollResult, moveResult }: {
       gameState: GameState;
       rollResult?: number;
       moveResult?: GameMove;
     }) => {
       setGameState(gameState);
+      setIsMultiplayerRolling(false);
 
       if (rollResult) {
         soundEffects.playDiceResult(rollResult);
       }
 
       if (moveResult) {
-        if (moveResult.capturedToken) {
-          soundEffects.playCapture();
-        } else if (moveResult.reachedHome) {
-          soundEffects.playHomeGoal();
-        } else {
-          soundEffects.playTokenHop();
-        }
+        setLastMove(moveResult);
+      }
+    });
+
+    socket.on('chat_history', ({ messages }: { messages: ChatMessage[] }) => {
+      if (messages && messages.length > 0) {
+        setChatMessages(messages);
       }
     });
 
@@ -397,6 +421,7 @@ export const App: React.FC = () => {
 
   const handleOnlineRollDice = () => {
     if (room) {
+      socketRef.current?.emit('dice_rolling', { roomId: room.id });
       socketRef.current?.emit('roll_dice', { roomId: room.id });
     }
   };
@@ -405,6 +430,22 @@ export const App: React.FC = () => {
     if (room) {
       socketRef.current?.emit('move_token', { roomId: room.id, tokenId });
     }
+  };
+
+  const handleJoinCall = (enableAudio: boolean, enableVideo: boolean) => {
+    webrtcManager.joinCall(enableAudio, enableVideo);
+  };
+
+  const handleToggleAudio = () => {
+    webrtcManager.toggleAudio();
+  };
+
+  const handleToggleVideo = () => {
+    webrtcManager.toggleVideo();
+  };
+
+  const handleLeaveCall = () => {
+    webrtcManager.leaveCall();
   };
 
   const handleSendChat = (text: string, isQuickChat?: boolean) => {
@@ -557,12 +598,8 @@ export const App: React.FC = () => {
             const bestMove = LudoClientEngine.chooseBestMove(rollRes.state);
             if (bestMove !== null) {
               const moveRes = LudoClientEngine.handleMoveToken(rollRes.state, bestMove);
-              if (moveRes.moveResult?.capturedToken) {
-                soundEffects.playCapture();
-              } else if (moveRes.moveResult?.reachedHome) {
-                soundEffects.playHomeGoal();
-              } else {
-                soundEffects.playTokenHop();
+              if (moveRes.moveResult) {
+                setLastMove(moveRes.moveResult);
               }
               setGameState(moveRes.state);
 
@@ -583,20 +620,21 @@ export const App: React.FC = () => {
   // Offline Token & Roll Handlers
   const handleOfflineRollDice = () => {
     if (!gameState || gameState.hasRolled) return;
-    const rollRes = LudoClientEngine.handleDiceRoll(gameState);
-    soundEffects.playDiceResult(rollRes.state.diceValue || 6);
-    setGameState(rollRes.state);
+    setIsMultiplayerRolling(true);
+    soundEffects.playDiceShake();
+    setTimeout(() => {
+      setIsMultiplayerRolling(false);
+      const rollRes = LudoClientEngine.handleDiceRoll(gameState);
+      soundEffects.playDiceResult(rollRes.state.diceValue || 6);
+      setGameState(rollRes.state);
+    }, 600);
   };
 
   const handleOfflineMoveToken = (tokenId: number) => {
     if (!gameState || !gameState.hasRolled) return;
     const moveRes = LudoClientEngine.handleMoveToken(gameState, tokenId);
-    if (moveRes.moveResult?.capturedToken) {
-      soundEffects.playCapture();
-    } else if (moveRes.moveResult?.reachedHome) {
-      soundEffects.playHomeGoal();
-    } else {
-      soundEffects.playTokenHop();
+    if (moveRes.moveResult) {
+      setLastMove(moveRes.moveResult);
     }
     setGameState(moveRes.state);
 
@@ -827,7 +865,10 @@ export const App: React.FC = () => {
           <GameScreen
             gameState={gameState}
             myColor={myColor}
+            myUserName={user.username}
             unreadChatCount={unreadChatCount}
+            lastMove={lastMove}
+            isMultiplayerRolling={isMultiplayerRolling}
             onRollDice={isOfflineMode ? handleOfflineRollDice : handleOnlineRollDice}
             onMoveToken={isOfflineMode ? handleOfflineMoveToken : handleOnlineMoveToken}
             onOpenChat={() => {
@@ -837,9 +878,15 @@ export const App: React.FC = () => {
             onSendReaction={handleSendReaction}
             onLeaveGame={() => {
               if (window.confirm('Are you sure you want to leave this match?')) {
+                webrtcManager.leaveCall();
                 setCurrentView('home');
               }
             }}
+            webrtcState={webrtcState}
+            onJoinCall={handleJoinCall}
+            onToggleAudio={handleToggleAudio}
+            onToggleVideo={handleToggleVideo}
+            onLeaveCall={handleLeaveCall}
           />
         )}
       </main>
@@ -854,6 +901,7 @@ export const App: React.FC = () => {
         messages={chatMessages}
         onSendMessage={handleSendChat}
         onSendReaction={handleSendReaction}
+        onClearChat={() => setChatMessages([])}
         myColor={myColor}
       />
 

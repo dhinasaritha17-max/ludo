@@ -15,6 +15,7 @@ describe('Multiplayer Real-Time Synchronization', () => {
   let client2: ClientSocketType;
   let client3: ClientSocketType;
   let client4: ClientSocketType;
+  let sharedRoomId: string;
 
   before(async () => {
     const app = express();
@@ -58,6 +59,7 @@ describe('Multiplayer Real-Time Synchronization', () => {
     });
 
     const { room } = await roomCreatedPromise;
+    sharedRoomId = room.id;
     assert.ok(room.code);
     assert.strictEqual(room.players.red?.name, 'Alice');
 
@@ -168,5 +170,115 @@ describe('Multiplayer Real-Time Synchronization', () => {
       assert.strictEqual(syncState.gameState.currentTurn, 'green');
       assert.strictEqual(syncState.gameState.hasRolled, false);
     }
+  });
+
+  it('should synchronize dice_rolling animation across all players in real time', async () => {
+    const diceRollingPromise = new Promise<{ roomId: string }>((resolve) => {
+      client2.on('dice_rolling', resolve);
+    });
+
+    client1.emit('dice_rolling', { roomId: sharedRoomId });
+    const payload = await diceRollingPromise;
+    assert.strictEqual(payload.roomId, sharedRoomId);
+  });
+
+  it('should handle WebRTC mesh media join, SDP signal forwarding, state toggles, and leave', async () => {
+    // 1. Client 1 joins voice & video
+    const client1ExistingPeersPromise = new Promise<{ peers: any[] }>((resolve) => {
+      client1.on('media_existing_peers', resolve);
+    });
+
+    client1.emit('media_join', {
+      roomId: sharedRoomId,
+      peer: {
+        peerId: 'usr_alice',
+        userId: 'usr_alice',
+        name: 'Alice',
+        color: 'red',
+        audioEnabled: true,
+        videoEnabled: true,
+      },
+    });
+
+    const existing1 = await client1ExistingPeersPromise;
+    assert.strictEqual(existing1.peers.length, 0); // First peer in call
+
+    // 2. Client 2 joins and notifies Client 1
+    const peerJoinedPromise = new Promise<{ peer: any }>((resolve) => {
+      client1.on('media_peer_joined', resolve);
+    });
+
+    const client2ExistingPeersPromise = new Promise<{ peers: any[] }>((resolve) => {
+      client2.on('media_existing_peers', resolve);
+    });
+
+    client2.emit('media_join', {
+      roomId: sharedRoomId,
+      peer: {
+        peerId: 'usr_bob',
+        userId: 'usr_bob',
+        name: 'Bob',
+        color: 'green',
+        audioEnabled: true,
+        videoEnabled: false, // Voice only
+      },
+    });
+
+    const { peer } = await peerJoinedPromise;
+    assert.strictEqual(peer.name, 'Bob');
+    assert.strictEqual(peer.videoEnabled, false);
+
+    const existing2 = await client2ExistingPeersPromise;
+    assert.strictEqual(existing2.peers.length, 1);
+    assert.strictEqual(existing2.peers[0].name, 'Alice');
+
+    // 3. WebRTC Signal Relay (SDP Offer from Alice to Bob)
+    const signalPromise = new Promise<any>((resolve) => {
+      client2.on('media_signal', resolve);
+    });
+
+    client1.emit('media_signal', {
+      roomId: sharedRoomId,
+      fromPeerId: 'usr_alice',
+      toPeerId: 'usr_bob',
+      signal: {
+        type: 'offer',
+        sdp: { type: 'offer', sdp: 'mock-sdp-data' },
+      },
+    });
+
+    const receivedSignal = await signalPromise;
+    assert.strictEqual(receivedSignal.fromPeerId, 'usr_alice');
+    assert.strictEqual(receivedSignal.signal.type, 'offer');
+    assert.strictEqual(receivedSignal.signal.sdp.sdp, 'mock-sdp-data');
+
+    // 4. Bob toggles microphone mute
+    const stateChangedPromise = new Promise<any>((resolve) => {
+      client1.on('media_state_changed', resolve);
+    });
+
+    client2.emit('media_state_change', {
+      roomId: sharedRoomId,
+      peerId: 'usr_bob',
+      audioEnabled: false,
+      videoEnabled: false,
+    });
+
+    const stateChange = await stateChangedPromise;
+    assert.strictEqual(stateChange.peerId, 'usr_bob');
+    assert.strictEqual(stateChange.audioEnabled, false);
+
+    // 5. Bob leaves call
+    const peerLeftPromise = new Promise<{ peerId: string }>((resolve) => {
+      client1.on('media_peer_left', resolve);
+    });
+
+    client2.emit('media_leave', {
+      roomId: sharedRoomId,
+      peerId: 'usr_bob',
+    });
+
+    const leftData = await peerLeftPromise;
+    assert.strictEqual(leftData.peerId, 'usr_bob');
   });
 });

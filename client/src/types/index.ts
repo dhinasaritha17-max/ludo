@@ -159,3 +159,23 @@ export interface Room {
   rematchVotes?: Set<string> | string[];
 }
 
+export interface MediaPeerState {
+  peerId: string;
+  userId: string;
+  name: string;
+  color?: PlayerColor;
+  audioEnabled: boolean;
+  videoEnabled: boolean;
+}
+
+export interface MediaSignalPayload {
+  roomId: string;
+  fromPeerId: string;
+  toPeerId: string;
+  signal: {
+    type: 'offer' | 'answer' | 'candidate';
+    sdp?: any;
+    candidate?: any;
+  };
+}
+

@@ -1,13 +1,14 @@
 import { Server, Socket } from 'socket.io';
 import { RoomManager, Room } from '../managers/RoomManager.js';
 import { LudoEngine } from '../engine/LudoEngine.js';
-import { PlayerColor, GameMode } from '../types/index.js';
+import { PlayerColor, GameMode, MediaPeerState, MediaSignalPayload } from '../types/index.js';
 
 export class SocketHandler {
   private io: Server;
   private roomManager: RoomManager;
   private botTimeouts: Map<string, NodeJS.Timeout> = new Map();
   private turnTimers: Map<string, NodeJS.Timeout> = new Map();
+  private roomMediaPeers: Map<string, Map<string, MediaPeerState>> = new Map();
 
   constructor(io: Server) {
     this.io = io;
@@ -218,6 +219,60 @@ export class SocketHandler {
         }
       });
 
+      // Synchronize active dice rolling animation start across all players
+      socket.on('dice_rolling', ({ roomId }: { roomId: string }) => {
+        socket.to(roomId).emit('dice_rolling', { roomId });
+      });
+
+      // WebRTC Media: Join voice / video call
+      socket.on('media_join', ({ roomId, peer }: { roomId: string; peer: MediaPeerState }) => {
+        let roomPeers = this.roomMediaPeers.get(roomId);
+        if (!roomPeers) {
+          roomPeers = new Map();
+          this.roomMediaPeers.set(roomId, roomPeers);
+        }
+
+        // Send list of currently active peers in call to newly joined peer
+        const existing = Array.from(roomPeers.values());
+        socket.emit('media_existing_peers', { peers: existing });
+
+        // Register new peer
+        roomPeers.set(peer.peerId, peer);
+
+        // Notify other room participants
+        socket.to(roomId).emit('media_peer_joined', { peer });
+      });
+
+      // WebRTC Media: Relay SDP / ICE signal
+      socket.on('media_signal', (payload: MediaSignalPayload) => {
+        socket.to(payload.roomId).emit('media_signal', payload);
+      });
+
+      // WebRTC Media: Update audio / video toggle states
+      socket.on('media_state_change', ({ roomId, peerId, audioEnabled, videoEnabled }: {
+        roomId: string;
+        peerId: string;
+        audioEnabled: boolean;
+        videoEnabled: boolean;
+      }) => {
+        const roomPeers = this.roomMediaPeers.get(roomId);
+        if (roomPeers && roomPeers.has(peerId)) {
+          const peer = roomPeers.get(peerId)!;
+          peer.audioEnabled = audioEnabled;
+          peer.videoEnabled = videoEnabled;
+        }
+        socket.to(roomId).emit('media_state_changed', { peerId, audioEnabled, videoEnabled });
+      });
+
+      // WebRTC Media: Leave call
+      socket.on('media_leave', ({ roomId, peerId }: { roomId: string; peerId: string }) => {
+        const roomPeers = this.roomMediaPeers.get(roomId);
+        if (roomPeers) {
+          roomPeers.delete(peerId);
+        }
+        socket.to(roomId).emit('media_peer_left', { peerId });
+      });
+
       // Disconnect
       socket.on('disconnect', () => {
         if (currentRoomId && currentUserId) {
@@ -232,6 +287,13 @@ export class SocketHandler {
                 break;
               }
             }
+          }
+
+          // Clean up media peer if user was in a call
+          const roomPeers = this.roomMediaPeers.get(currentRoomId);
+          if (roomPeers && roomPeers.has(currentUserId)) {
+            roomPeers.delete(currentUserId);
+            this.io.to(currentRoomId).emit('media_peer_left', { peerId: currentUserId });
           }
         }
       });

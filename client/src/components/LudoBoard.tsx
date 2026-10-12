@@ -1,5 +1,5 @@
-import React from 'react';
-import { GameState, PlayerColor, Token } from '../types/index.js';
+import React, { useState, useEffect, useRef } from 'react';
+import { GameState, PlayerColor, Token, GameMove } from '../types/index.js';
 import {
   CELL_SIZE,
   BOARD_SIZE,
@@ -8,11 +8,14 @@ import {
   YARD_PEDESTALS,
   getTokenCoordinates,
 } from './boardGeometry.js';
+import { soundEffects } from '../audio/SoundEffects.js';
 
 interface LudoBoardProps {
   gameState: GameState;
   myColor?: PlayerColor;
   onTokenClick: (tokenId: number) => void;
+  lastMove?: GameMove | null;
+  onAnimationStateChange?: (isAnimating: boolean) => void;
 }
 
 const COLOR_MAP: Record<PlayerColor, { main: string; dark: string; light: string; border: string; glow: string }> = {
@@ -31,26 +34,156 @@ const START_INDICES: Record<number, PlayerColor> = {
   39: 'blue',
 };
 
-export const LudoBoard: React.FC<LudoBoardProps> = ({ gameState, myColor, onTokenClick }) => {
+interface TokenVisualState {
+  step: number;
+  isHopping: boolean;
+  isHit: boolean;
+}
+
+export const LudoBoard: React.FC<LudoBoardProps> = ({
+  gameState,
+  myColor,
+  onTokenClick,
+  lastMove,
+  onAnimationStateChange,
+}) => {
+  // Animated visual positions for tokens when stepping box-by-box
+  const [visualOverrides, setVisualOverrides] = useState<Record<string, TokenVisualState>>({});
+  const [isAnimating, setIsAnimating] = useState(false);
+  const processedMoveTimestamp = useRef<number>(0);
+  const animTimeouts = useRef<number[]>([]);
+
   const isMyTurn = gameState.status === 'in_progress' && (myColor ? gameState.currentTurn === myColor : true);
   const activeColor = gameState.currentTurn;
 
+  // Handle Box-by-Box Step Movement Animation
+  useEffect(() => {
+    if (!lastMove || lastMove.timestamp === processedMoveTimestamp.current) return;
+    processedMoveTimestamp.current = lastMove.timestamp;
+
+    // Clear any previous animation timers
+    animTimeouts.current.forEach(t => clearTimeout(t));
+    animTimeouts.current = [];
+
+    const { playerColor, tokenId, fromStep, toStep, capturedToken, reachedHome } = lastMove;
+    const tokenKey = `${playerColor}-${tokenId}`;
+
+    // Determine intermediate sequence of squares along the path
+    let stepSequence: number[] = [];
+    if (fromStep === -1) {
+      // Exiting yard to start square
+      stepSequence = [0];
+    } else if (toStep > fromStep) {
+      for (let s = fromStep + 1; s <= toStep; s++) {
+        stepSequence.push(s);
+      }
+    }
+
+    if (stepSequence.length === 0) return;
+
+    setIsAnimating(true);
+    onAnimationStateChange?.(true);
+
+    const stepIntervalMs = 170; // 170ms per square hop
+
+    stepSequence.forEach((targetStep, idx) => {
+      const timeout = window.setTimeout(() => {
+        setVisualOverrides(prev => ({
+          ...prev,
+          [tokenKey]: { step: targetStep, isHopping: true, isHit: false },
+        }));
+        soundEffects.playTokenHop();
+
+        // Settle hop after half duration
+        const settleTimeout = window.setTimeout(() => {
+          setVisualOverrides(prev => {
+            if (!prev[tokenKey]) return prev;
+            return {
+              ...prev,
+              [tokenKey]: { ...prev[tokenKey], isHopping: false },
+            };
+          });
+        }, stepIntervalMs * 0.55);
+        animTimeouts.current.push(settleTimeout);
+
+        // If this is the final step
+        if (idx === stepSequence.length - 1) {
+          const finalTimeout = window.setTimeout(() => {
+            if (reachedHome) {
+              soundEffects.playHomeGoal();
+            }
+
+            // Handle captured opponent token returning to yard
+            if (capturedToken) {
+              const capturedKey = `${capturedToken.color}-${capturedToken.tokenId}`;
+              // Flash captured token
+              setVisualOverrides(prev => ({
+                ...prev,
+                [capturedKey]: {
+                  step: prev[capturedKey]?.step ?? -1,
+                  isHopping: false,
+                  isHit: true,
+                },
+              }));
+              soundEffects.playCapture();
+
+              // Glide back to yard pedestal
+              const returnTimeout = window.setTimeout(() => {
+                setVisualOverrides(prev => ({
+                  ...prev,
+                  [capturedKey]: { step: -1, isHopping: false, isHit: false },
+                }));
+
+                const cleanupTimeout = window.setTimeout(() => {
+                  setVisualOverrides({});
+                  setIsAnimating(false);
+                  onAnimationStateChange?.(false);
+                }, 250);
+                animTimeouts.current.push(cleanupTimeout);
+              }, 300);
+              animTimeouts.current.push(returnTimeout);
+            } else {
+              setVisualOverrides({});
+              setIsAnimating(false);
+              onAnimationStateChange?.(false);
+            }
+          }, stepIntervalMs * 0.7);
+          animTimeouts.current.push(finalTimeout);
+        }
+      }, idx * stepIntervalMs);
+
+      animTimeouts.current.push(timeout);
+    });
+
+    return () => {
+      animTimeouts.current.forEach(t => clearTimeout(t));
+      animTimeouts.current = [];
+    };
+  }, [lastMove]);
+
   // Flatten and group all tokens to compute multi-token offset clustering on same square
-  const allTokens: Token[] = [];
+  const allTokensWithSteps: Array<{ token: Token; effectiveStep: number; isHopping: boolean; isHit: boolean }> = [];
   (['red', 'green', 'yellow', 'blue'] as PlayerColor[]).forEach(color => {
     if (gameState.tokens[color]) {
-      allTokens.push(...gameState.tokens[color]);
+      gameState.tokens[color].forEach(t => {
+        const key = `${color}-${t.id}`;
+        const override = visualOverrides[key];
+        const effectiveStep = override !== undefined ? override.step : t.step;
+        const isHopping = override?.isHopping ?? false;
+        const isHit = override?.isHit ?? false;
+        allTokensWithSteps.push({ token: t, effectiveStep, isHopping, isHit });
+      });
     }
   });
 
   // Calculate clustering on main track
-  const trackOccupants: Record<number, Token[]> = {};
-  allTokens.forEach(t => {
-    if (t.step >= 0 && t.step <= 50) {
+  const trackOccupants: Record<number, Array<{ color: PlayerColor; id: number }>> = {};
+  allTokensWithSteps.forEach(({ token, effectiveStep }) => {
+    if (effectiveStep >= 0 && effectiveStep <= 50) {
       const offsets: Record<PlayerColor, number> = { red: 0, green: 13, yellow: 26, blue: 39 };
-      const abs = (offsets[t.color] + t.step) % 52;
+      const abs = (offsets[token.color] + effectiveStep) % 52;
       trackOccupants[abs] = trackOccupants[abs] || [];
-      trackOccupants[abs].push(t);
+      trackOccupants[abs].push({ color: token.color, id: token.id });
     }
   });
 
@@ -58,7 +191,7 @@ export const LudoBoard: React.FC<LudoBoardProps> = ({ gameState, myColor, onToke
     <div className="relative flex justify-center items-center select-none w-full max-w-[560px] mx-auto p-2">
       <svg
         viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
-        className="w-full h-auto drop-shadow-2xl rounded-2xl overflow-hidden border-4 border-slate-800 bg-slate-900"
+        className="w-full h-auto drop-shadow-2xl rounded-3xl overflow-hidden border-4 border-slate-800 bg-slate-900"
         style={{ aspectRatio: '1 / 1' }}
       >
         <defs>
@@ -101,15 +234,6 @@ export const LudoBoard: React.FC<LudoBoardProps> = ({ gameState, myColor, onToke
             <stop offset="60%" stopColor="#3B82F6" />
             <stop offset="100%" stopColor="#1E40AF" />
           </radialGradient>
-
-          {/* Filter for glowing eligible tokens */}
-          <filter id="glow-filter" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
         </defs>
 
         {/* Board Background */}
@@ -131,7 +255,7 @@ export const LudoBoard: React.FC<LudoBoardProps> = ({ gameState, myColor, onToke
               strokeWidth={2}
             />
           ))}
-          <text x={120} y={125} fill="#EF4444" fontSize={16} fontWeight="bold" textAnchor="middle" opacity={0.6}>
+          <text x={120} y={125} fill="#EF4444" fontSize={16} fontWeight="bold" textAnchor="middle" opacity={0.7}>
             RED
           </text>
         </g>
@@ -151,7 +275,7 @@ export const LudoBoard: React.FC<LudoBoardProps> = ({ gameState, myColor, onToke
               strokeWidth={2}
             />
           ))}
-          <text x={480} y={125} fill="#10B981" fontSize={16} fontWeight="bold" textAnchor="middle" opacity={0.6}>
+          <text x={480} y={125} fill="#10B981" fontSize={16} fontWeight="bold" textAnchor="middle" opacity={0.7}>
             GREEN
           </text>
         </g>
@@ -171,7 +295,7 @@ export const LudoBoard: React.FC<LudoBoardProps> = ({ gameState, myColor, onToke
               strokeWidth={2}
             />
           ))}
-          <text x={480} y={485} fill="#F59E0B" fontSize={16} fontWeight="bold" textAnchor="middle" opacity={0.6}>
+          <text x={480} y={485} fill="#F59E0B" fontSize={16} fontWeight="bold" textAnchor="middle" opacity={0.7}>
             YELLOW
           </text>
         </g>
@@ -191,7 +315,7 @@ export const LudoBoard: React.FC<LudoBoardProps> = ({ gameState, myColor, onToke
               strokeWidth={2}
             />
           ))}
-          <text x={120} y={485} fill="#3B82F6" fontSize={16} fontWeight="bold" textAnchor="middle" opacity={0.6}>
+          <text x={120} y={485} fill="#3B82F6" fontSize={16} fontWeight="bold" textAnchor="middle" opacity={0.7}>
             BLUE
           </text>
         </g>
@@ -273,26 +397,36 @@ export const LudoBoard: React.FC<LudoBoardProps> = ({ gameState, myColor, onToke
         {/* Blue Home Triangle (pointing up) */}
         <polygon points="240,360 360,360 300,300" fill={COLOR_MAP.blue.main} />
 
-        {/* Center Golden Star / Crown Emblem */}
+        {/* Center Golden Crown Emblem */}
         <circle cx={300} cy={300} r={22} fill="#0F172A" stroke="#F59E0B" strokeWidth={2.5} />
         <text x={300} y={306} fontSize={18} fill="#FCD34D" textAnchor="middle">
           👑
         </text>
 
-        {/* 5. TOKENS LAYER */}
+        {/* 5. TOKENS LAYER WITH BOX-BY-BOX SMOOTH STEP ANIMATION */}
         {(['red', 'green', 'yellow', 'blue'] as PlayerColor[]).map(color => {
           const tokens = gameState.tokens[color] || [];
 
           return tokens.map(token => {
-            const coords = getTokenCoordinates(color, token.step, token.id);
-            const isEligible = isMyTurn && activeColor === color && gameState.validMoves.includes(token.id);
+            const key = `${color}-${token.id}`;
+            const override = visualOverrides[key];
+            const effectiveStep = override !== undefined ? override.step : token.step;
+            const isHopping = override?.isHopping ?? false;
+            const isHit = override?.isHit ?? false;
+
+            const coords = getTokenCoordinates(color, effectiveStep, token.id);
+            const isEligible =
+              !isAnimating &&
+              isMyTurn &&
+              activeColor === color &&
+              gameState.validMoves.includes(token.id);
 
             // Compute offset if multiple tokens share the same track square
             let offsetX = 0;
             let offsetY = 0;
-            if (token.step >= 0 && token.step <= 50) {
+            if (effectiveStep >= 0 && effectiveStep <= 50) {
               const offsets: Record<PlayerColor, number> = { red: 0, green: 13, yellow: 26, blue: 39 };
-              const abs = (offsets[color] + token.step) % 52;
+              const abs = (offsets[color] + effectiveStep) % 52;
               const occupants = trackOccupants[abs] || [];
               if (occupants.length > 1) {
                 const occupantIndex = occupants.findIndex(t => t.color === color && t.id === token.id);
@@ -305,20 +439,26 @@ export const LudoBoard: React.FC<LudoBoardProps> = ({ gameState, myColor, onToke
 
             const posX = coords.x + offsetX;
             const posY = coords.y + offsetY;
+            const hopTranslateY = isHopping ? -9 : 0;
+            const hopScale = isHopping ? 1.2 : isHit ? 0.8 : 1;
 
             return (
               <g
                 key={`${color}-${token.id}`}
                 onClick={() => isEligible && onTokenClick(token.id)}
-                className={`transition-all duration-300 ${isEligible ? 'cursor-pointer' : ''}`}
-                style={{ transformOrigin: `${posX}px ${posY}px` }}
+                className={`transition-all duration-200 ${isEligible ? 'cursor-pointer' : ''}`}
+                style={{
+                  transform: `translate(0, ${hopTranslateY}px) scale(${hopScale})`,
+                  transformOrigin: `${posX}px ${posY}px`,
+                  transition: 'transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                }}
               >
-                {/* Eligible Active Glow Ring */}
+                {/* Eligible Active Pulsing Halo */}
                 {isEligible && (
                   <circle
                     cx={posX}
                     cy={posY}
-                    r={19}
+                    r={20}
                     fill="none"
                     stroke="#FFFFFF"
                     strokeWidth={3}
@@ -326,8 +466,14 @@ export const LudoBoard: React.FC<LudoBoardProps> = ({ gameState, myColor, onToke
                   />
                 )}
 
-                {/* Outer Shadow Ring */}
-                <circle cx={posX} cy={posY + 2} r={15} fill="rgba(0, 0, 0, 0.45)" />
+                {/* Outer Shadow */}
+                <circle
+                  cx={posX}
+                  cy={posY + (isHopping ? 8 : 2)}
+                  r={isHopping ? 18 : 15}
+                  fill="rgba(0, 0, 0, 0.45)"
+                  className="transition-all duration-150"
+                />
 
                 {/* Main 3D Token Body */}
                 <circle
@@ -346,7 +492,9 @@ export const LudoBoard: React.FC<LudoBoardProps> = ({ gameState, myColor, onToke
                 <circle cx={posX} cy={posY} r={3} fill="#FFFFFF" />
 
                 {/* Token Label for easy accessibility */}
-                <title>{`${color.toUpperCase()} Token ${token.id + 1} (Step: ${token.step === -1 ? 'Yard' : token.step === 56 ? 'Home' : token.step})`}</title>
+                <title>{`${color.toUpperCase()} Token ${token.id + 1} (Step: ${
+                  effectiveStep === -1 ? 'Yard' : effectiveStep === 56 ? 'Home' : effectiveStep
+                })`}</title>
               </g>
             );
           });
